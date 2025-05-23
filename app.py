@@ -1,11 +1,6 @@
-# app.py
 from flask import Flask, request, jsonify
-from selenium import webdriver
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from webdriver_manager.chrome import ChromeDriverManager
+import requests
+from bs4 import BeautifulSoup
 import re
 
 app = Flask(__name__)
@@ -24,29 +19,28 @@ def consultar_produto():
 
         url = f"https://minhaloja.boticario.com.br/revendedor/produto/{codigo_produto}/?uf=SE"
 
-        options = webdriver.ChromeOptions()
-        options.add_argument('--headless')
-        options.add_argument('--disable-gpu')
-        options.add_argument('--no-sandbox')
+        # Realiza a requisição HTTP para a página do produto
+        response = requests.get(url)
+        if response.status_code != 200:
+            return jsonify({"erro": "Não foi possível acessar a página."}), 500
 
-        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+        # Parseia o conteúdo HTML da página
+        soup = BeautifulSoup(response.text, 'html.parser')
 
-        driver.get(url)
+        # Tenta encontrar o nome do produto
+        nome_element = soup.find('h1')
+        nome = nome_element.text.strip() if nome_element else "Não encontrado"
 
-        try:
-            nome = WebDriverWait(driver, 5).until(
-                EC.presence_of_element_located((By.TAG_NAME, 'h1'))
-            ).text.strip()
-        except:
-            nome = "Não encontrado"
+        # Tenta encontrar o preço
+        preco_element = soup.find('h5', string=re.compile(r"R\$"))
+        if preco_element:
+            preco_texto = preco_element.text.strip()
+        else:
+            return jsonify({"erro": "Preço não encontrado."}), 404
 
-        preco_element = WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.XPATH, '//h5[contains(text(), "R$")]'))
-        )
-        preco_texto = preco_element.text.strip()
-
-        desconto_element = driver.find_elements(By.XPATH, '//span[contains(text(), "%")]')
-        desconto = desconto_element[0].text.strip() if desconto_element else None
+        # Verifica se há desconto
+        desconto_element = soup.find('span', string=re.compile(r"\d+%"))
+        desconto = desconto_element.text.strip() if desconto_element else None
 
         preco_com_desconto = float(re.sub(r'[^\d,]', '', preco_texto).replace(',', '.'))
 
@@ -56,8 +50,6 @@ def consultar_produto():
             preco_original = round(preco_original, 2)
         else:
             preco_original = preco_com_desconto
-
-        driver.quit()
 
         return jsonify({
             "nome": nome,
